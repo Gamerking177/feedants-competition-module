@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { Competition, CompetitionStatus, ICompetition } from '../models/Competition';
 import { Registration } from '../models/Registration';
+import { Submission } from '../models/Submission';
 import { AppError } from '../utils/AppError';
 import { AuthenticatedUser } from '../types/express';
 
@@ -213,23 +214,32 @@ export const competitionService = {
 
     // 6. Build user participation state
     let isRegistered = false;
+    let hasSubmitted = false;
+
     if (user?.id) {
-      const existing = await Registration.exists({
-        competitionId: competition._id,
-        userId: user.id,
-      });
-      isRegistered = Boolean(existing);
+      const [regExists, subExists] = await Promise.all([
+        Registration.exists({
+          competitionId: competition._id,
+          userId: user.id,
+        }),
+        Submission.exists({
+          competitionId: competition._id,
+          userId: user.id,
+        }),
+      ]);
+      isRegistered = Boolean(regExists);
+      hasSubmitted = Boolean(subExists);
     }
 
     const userState = {
       isRegistered,
-      hasSubmitted: false,
+      hasSubmitted,
     };
 
     // 7. Build permitted actions
     const actions = {
       canRegister: effectiveStatus === 'REGISTRATION_OPEN' && remainingSpots > 0 && !isRegistered,
-      canSubmit: false,
+      canSubmit: effectiveStatus === 'SUBMISSION_OPEN' && isRegistered && !hasSubmitted,
     };
 
     return {

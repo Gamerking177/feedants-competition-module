@@ -83,6 +83,10 @@ Mongoose schema optimization and indexes:
   - `{ competitionId: 1, userId: 1 }`: Unique compound index guaranteeing zero duplicate registrations at the database level.
   - `{ competitionId: 1 }`: Fast lookup of registrations for a competition.
   - `{ userId: 1 }`: Fast lookup of user registrations.
+- **Submission**:
+  - `{ competitionId: 1, userId: 1 }`: Unique compound index guaranteeing one submission per user per competition at the database level.
+  - `{ competitionId: 1 }`: Fast lookup of submissions for a competition.
+  - `{ userId: 1 }`: Fast lookup of user submissions.
 
 ---
 
@@ -171,22 +175,27 @@ backend/
 │   │   ├── auth.routes.ts           # Authentication routes (/register, /login, /me)
 │   │   ├── competition.routes.ts    # Competition routes (/:competitionId)
 │   │   ├── registration.routes.ts   # Registration routes (/:competitionId/register)
+│   │   ├── submission.routes.ts     # Submission routes (/:competitionId/submission)
 │   │   └── index.ts                 # Root API router mounted at /api/v1
 │   ├── controllers/
 │   │   ├── auth.controller.ts         # Authentication request handlers
 │   │   ├── competition.controller.ts  # Competition request handlers
-│   │   └── registration.controller.ts # Competition registration request handlers
+│   │   ├── registration.controller.ts # Competition registration request handlers
+│   │   └── submission.controller.ts   # Competition submission request handlers
 │   ├── services/
 │   │   ├── auth.service.ts         # Authentication business logic & password hashing
 │   │   ├── competition.service.ts  # Competition details, lifecycle & capacity calculation
-│   │   └── registration.service.ts # Concurrency-safe registration with atomic reservation & transactions
+│   │   ├── registration.service.ts # Concurrency-safe registration with atomic reservation & transactions
+│   │   └── submission.service.ts   # Submission business logic, lifecycle checks & duplicate prevention
 │   ├── models/
 │   │   ├── Competition.ts     # Competition model with subdocuments & lifecycle
 │   │   ├── Registration.ts    # Registration model with unique compound index
+│   │   ├── Submission.ts      # Submission model with unique compound index
 │   │   └── User.ts            # User Mongoose model with safe serialization
 │   ├── validators/
 │   │   ├── auth.validator.ts        # Zod schemas for register and login
-│   │   └── competition.validator.ts # Zod schemas for competition data
+│   │   ├── competition.validator.ts # Zod schemas for competition data
+│   │   └── submission.validator.ts  # Zod schemas for project submissions
 │   ├── utils/
 │   │   ├── AppError.ts        # Custom operational error class with HTTP status & codes
 │   │   ├── logger.ts          # Structured logger with sanitization of sensitive data
@@ -201,6 +210,7 @@ backend/
 │   ├── competition.test.ts         # Competition model and lifecycle test scenarios
 │   ├── competition-details.test.ts # Competition details API test scenarios
 │   ├── registration.test.ts        # Competition registration & concurrency test scenarios
+│   ├── submission.test.ts          # Competition submission & concurrency test scenarios
 │   ├── health.test.ts              # Health check endpoint tests
 │   ├── middleware.test.ts          # Error handler, 404, rate limiter, and validate tests
 │   └── utils.test.ts               # AppError, requestId, response helpers tests
@@ -393,5 +403,52 @@ backend/
   - `409 REGISTRATION_FULL`: Competition has reached maximum capacity.
   - `409 ALREADY_REGISTERED`: User is already registered for this competition.
   - `409 PAYMENT_REQUIRED`: Competition requires payment.
+
+### Competition Submission
+- **Method**: `POST`
+- **Path**: `/api/v1/competitions/:competitionId/submission`
+- **Access**: Authenticated (requires `Authorization: Bearer <JWT>`)
+- **Rate Limit**: 30 requests / 15 minutes per IP
+- **Request Body**:
+```json
+{
+  "fileUrl": "https://example.com/submission.zip",
+  "fileType": "zip"
+}
+```
+- **Rules & Protections**:
+  - **Server-Authoritative Lifecycle**: Submission is permitted only when effective status is `SUBMISSION_OPEN` based on server UTC time. Requests outside the submission window return HTTP 409 `SUBMISSION_NOT_OPEN`.
+  - **Registration Prerequisite**: Authenticated user must have an existing `Registration` record for the competition. Unregistered users receive HTTP 409 `NOT_REGISTERED`.
+  - **Zero Duplicate Submissions**: Enforced via application check and database-level unique compound index `{ competitionId: 1, userId: 1 }`. Duplicate attempts return HTTP 409 `ALREADY_SUBMITTED`.
+  - **Identity & Payload Integrity**: User identity is derived exclusively from the verified JWT (`req.user.id`). Client-provided `userId`, `competitionId`, `status`, or `submittedAt` fields are discarded.
+  - **File Type Semantics**: `fileType` is metadata supplied by the client and is not trusted as proof of actual file format or contents. Storage and MIME validation are decoupled.
+- **Success Response** (`201 Created`):
+```json
+{
+  "success": true,
+  "message": "Submission received successfully",
+  "data": {
+    "submission": {
+      "id": "60c72b2f9b1d8b001c8e4e88",
+      "competitionId": "60c72b2f9b1d8b001c8e4e01",
+      "userId": "60c72b2f9b1d8b001c8e4e55",
+      "fileUrl": "https://example.com/submission.zip",
+      "fileType": "zip",
+      "status": "SUBMITTED",
+      "submittedAt": "2026-06-15T12:00:00.000Z"
+    }
+  }
+}
+```
+- **Error Codes**:
+  - `400 INVALID_ID`: Invalid competition ID format.
+  - `400 VALIDATION_ERROR`: Invalid or missing payload fields (`fileUrl`, `fileType`).
+  - `401 UNAUTHORIZED`: Missing authentication token.
+  - `401 INVALID_TOKEN`: Malformed or invalid JWT signature.
+  - `401 ACCOUNT_INACTIVE`: User account is deactivated.
+  - `404 COMPETITION_NOT_FOUND`: Competition does not exist.
+  - `409 SUBMISSION_NOT_OPEN`: Competition is not currently accepting submissions.
+  - `409 NOT_REGISTERED`: User is not registered for this competition.
+  - `409 ALREADY_SUBMITTED`: User has already submitted for this competition.
 
 
