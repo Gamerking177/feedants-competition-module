@@ -1,79 +1,101 @@
-# Feedants Competition Details Module - Backend
+# Feedants Competition Details Module - Backend Service
 
-> **Current Phase: Phase 4 - User Authentication & User Management**
-
-This repository contains the backend service for the **Feedants Competition Details Module**. Phase 4 focuses on secure user authentication, registration, login, JWT issuance and verification, and user management.
+This repository provides the backend service for the **Feedants Competition Details Module**, powering competition listings, competition details, lifecycle management, user authentication, and participant capacity management.
 
 ---
 
-## 1. Project Overview & Scope
+## 1. System Overview
 
-### Implemented in Phase 4
-- **User Model**: Mongoose schema with unique lowercase email index, bcrypt-hashed passwords (`select: false`), and safe JSON serialization.
-- **Password Security**: Strong password hashing using `bcryptjs` (cost factor 10). Plaintext passwords are never stored or logged.
-- **JWT Authentication**: Token generation and verification with explicit `HS256` algorithm enforcement and expiration tracking.
-- **Authentication Middleware**: `authenticate` middleware that extracts Bearer tokens, verifies signatures, checks user existence and active status in MongoDB, and attaches `req.user`.
-- **Request Identity Rule**: User identity supplied via request bodies, queries, params, or custom headers is never trusted; authenticated identity is derived exclusively from the verified Bearer JWT.
-- **Auth Rate Limiting**: Stricter rate limits on `/api/v1/auth/register` and `/api/v1/auth/login` (10 requests per 15 minutes in production).
-- **Validation**: Strict Zod schemas for registration and login inputs.
-- **Safe Error Responses**: Centralized error handler with field-aware MongoDB duplicate key (code 11000) mapping (`EMAIL_ALREADY_EXISTS`).
-- **Authentication Endpoints**:
-  - `POST /api/v1/auth/register`
-  - `POST /api/v1/auth/login`
-  - `GET /api/v1/auth/me`
-- **Automated Tests**: 37 automated tests across 4 test suites with isolated test database support.
+The backend is built as a secure, maintainable, and scalable REST API using Node.js, Express.js, TypeScript, and MongoDB.
 
-### Implemented in Phase 3 (Foundation)
-- Express Application, strict TypeScript configuration, MongoDB connection management with graceful shutdown.
-- Request ID tracing (`X-Request-ID`), structured logging, Helmet security headers, CORS origin whitelist, 10kb body size limit, and `/health` endpoint.
-
-### Not Yet Implemented (Deferred to Future Phases)
-- Competition models and database schemas
-- Competition details and listing APIs
-- Registration and spot reservation logic
-- Submissions and file upload handling
-- Winners and leaderboard management
-- Mobile application (React Native)
+### Core Capabilities
+- **Competition Data Model & Lifecycle**: Comprehensive domain model covering prizes, entry fees, participant caps, judges, rewards, previous winners, judging criteria, rules, and eight deterministic lifecycle states.
+- **Dynamic Lifecycle Determination**: Effective lifecycle state is computed server-side using UTC time and date windows without mutating database records on read.
+- **Capacity Management**: Server-side calculation of remaining participation spots ensuring non-negative values.
+- **User Authentication**: Secure registration, login, and identity verification using `bcryptjs` password hashing and `jsonwebtoken` with explicit `HS256` enforcement.
+- **Security & Hardening**: Helmet HTTP headers, strict CORS origin controls, IP rate limiting, 10kb JSON payload limits, and dual-mode structured logging with sensitive field redaction.
+- **Production-Safe Error Handling**: Centralized error mapping that suppresses stack traces and internal database errors in production.
 
 ---
 
-## 2. Tech Stack
+## 2. Competition Data Model & Lifecycle
+
+### Competition Model
+The `Competition` model (`src/models/Competition.ts`) is the authoritative source of truth for competition data:
+
+- **Identity**: `title` (3-120 chars), `slug` (unique, URL-safe), `category`, `type`.
+- **Content**: `description`, `language` (default: English).
+- **Financial & Capacity**: `prizePool` (non-negative number), `entryFee` (non-negative number), `maxParticipants` (>= 1), `registeredCount` (>= 0, never exceeds `maxParticipants`), `certificateAvailable` (boolean).
+- **Lifecycle Windows**:
+  - `registrationStart` & `registrationEnd`
+  - `submissionStart` & `submissionEnd`
+  - `resultDate` (optional; when absent, competition remains `SUBMISSION_CLOSED` after submission closes)
+- **Structured Subdocuments**:
+  - `judge`: Name, designation, organization, avatar URL, video URL.
+  - `rewards`: Ordered list with position, title, amount, and description.
+  - `previousWinners`: Name, position, year, image URL.
+  - `judgingParameters`: Criteria name, description, and non-negative weight.
+  - `rules`: Ordered list with display order, title, and description.
+
+### Lifecycle States
+Competitions transition through 8 standardized states:
+
+| Status | Meaning |
+| :--- | :--- |
+| `DRAFT` | Administrative preparation; not publicly open. |
+| `UPCOMING` | Publicly visible; registration window has not opened yet. |
+| `REGISTRATION_OPEN` | Users may register if remaining capacity exists. |
+| `REGISTRATION_CLOSED` | Registration window has ended OR capacity has been reached. |
+| `SUBMISSION_OPEN` | Registered participants may submit their entries. |
+| `SUBMISSION_CLOSED` | Submission window has closed; entries under review. |
+| `RESULT_PUBLISHED` | Competition results are officially published. |
+| `COMPLETED` | Competition lifecycle has concluded. |
+
+### Business Rules & Date Validation
+1. **Date Chronology**:
+   - `registrationStart < registrationEnd`
+   - `registrationEnd <= submissionStart`
+   - `submissionStart < submissionEnd`
+   - If `resultDate` is present: `submissionEnd <= resultDate`
+   - If `resultDate` is absent: competition is allowed and remains `SUBMISSION_CLOSED` after `submissionEnd`.
+2. **Effective Status Determination**:
+   - Persisted `DRAFT` and `COMPLETED` are administrative overrides.
+   - For all other states, the server determines the effective runtime status dynamically based on server UTC time.
+   - Client-provided status, remaining spots, or local device time are never trusted.
+3. **Capacity & Remaining Spots**:
+   - `remainingSpots = Math.max(0, maxParticipants - registeredCount)`
+   - Never returns a negative number.
+
+---
+
+## 3. Database Design & Indexes
+
+Mongoose schema optimization and indexes:
+- `{ slug: 1 }`: Unique index for fast lookups.
+- `{ status: 1 }`: Lifecycle filtering.
+- `{ category: 1 }`: Category filtering.
+- `{ registrationStart: 1 }`, `{ registrationEnd: 1 }`, `{ submissionStart: 1 }`, `{ resultDate: 1 }`: Date-range queries.
+- `{ status: 1, category: 1 }`: Compound index for filtered competition listings.
+- User email unique index: `{ email: 1 }`.
+
+---
+
+## 4. Tech Stack
 
 - **Runtime**: Node.js (v18+)
-- **Language**: TypeScript 5.x
+- **Language**: TypeScript 5.x (strict configuration)
 - **Framework**: Express.js 4.x
 - **Database**: MongoDB with Mongoose 8.x
 - **Authentication**: JWT (`jsonwebtoken`), `bcryptjs`
 - **Validation**: Zod 3.x
 - **Security**: Helmet, CORS, express-rate-limit
 - **Testing**: Vitest, Supertest
-- **Tooling**: ESLint, tsx
-
----
-
-## 3. Prerequisites
-
-- **Node.js**: >= 18.0.0
-- **npm**: >= 9.0.0
-- **MongoDB**: Local MongoDB instance (or MongoDB Atlas connection URI)
-
----
-
-## 4. Installation
-
-```bash
-# Navigate to backend directory
-cd backend
-
-# Install dependencies
-npm install
-```
 
 ---
 
 ## 5. Environment Variables
 
-Create a `.env` file in the `backend/` directory (refer to `.env.example`):
+Create a `.env` file in the `backend/` directory (see `.env.example`):
 
 ```env
 # Server Port
@@ -134,7 +156,7 @@ backend/
 │   │   └── env.ts             # Zod-validated typed environment configuration
 │   ├── middleware/
 │   │   ├── authenticate.ts   # JWT authentication middleware (HS256 only)
-│   │   ├── errorHandler.ts   # Centralized error handling (dev vs prod safe responses)
+│   │   ├── errorHandler.ts   # Centralized error handling (production-safe error masking)
 │   │   ├── notFound.ts       # 404 handler returning standardized error format
 │   │   ├── rateLimiter.ts    # Global & route-specific rate limiter factory
 │   │   └── validate.ts       # Generic Zod validation middleware (body, query, params)
@@ -144,11 +166,14 @@ backend/
 │   ├── controllers/
 │   │   └── auth.controller.ts # Authentication request handlers
 │   ├── services/
-│   │   └── auth.service.ts    # Authentication business logic & password hashing
+│   │   ├── auth.service.ts        # Authentication business logic & password hashing
+│   │   └── competition.service.ts # Competition lifecycle & capacity calculation
 │   ├── models/
-│   │   └── User.ts            # User Mongoose model with safe serialization
+│   │   ├── Competition.ts    # Competition model with subdocuments & lifecycle
+│   │   └── User.ts           # User Mongoose model with safe serialization
 │   ├── validators/
-│   │   └── auth.validator.ts  # Zod schemas for register and login
+│   │   ├── auth.validator.ts        # Zod schemas for register and login
+│   │   └── competition.validator.ts # Zod schemas for competition data
 │   ├── utils/
 │   │   ├── AppError.ts        # Custom operational error class with HTTP status & codes
 │   │   ├── logger.ts          # Structured logger with sanitization of sensitive data
@@ -159,7 +184,8 @@ backend/
 │   ├── app.ts                 # Express application setup, middlewares, routes
 │   └── server.ts              # HTTP server lifecycle, DB connection, graceful shutdown
 ├── tests/
-│   ├── auth.test.ts           # 20 authentication test scenarios
+│   ├── auth.test.ts           # Authentication test scenarios
+│   ├── competition.test.ts    # Competition model and lifecycle test scenarios
 │   ├── health.test.ts         # Health check endpoint tests
 │   ├── middleware.test.ts     # Error handler, 404, rate limiter, and validate tests
 │   └── utils.test.ts          # AppError, requestId, response helpers tests
@@ -175,11 +201,11 @@ backend/
 
 ## 8. Security Decisions
 
-1. **Strict Startup Sequence**: The HTTP server will not accept traffic until MongoDB connection succeeds. Startup fails fast if `MONGODB_URI` or required variables are missing or invalid.
+1. **Strict Startup Sequence**: The HTTP server will not accept traffic until MongoDB connection succeeds. Startup fails fast if required environment variables are missing or invalid.
 2. **Password Security**: Strong bcrypt hashing with salt cost factor 10. Passwords are never stored in plaintext and never exposed in JSON responses or log outputs.
 3. **Explicit JWT Algorithm**: JWT generation and verification strictly enforce `HS256` (`algorithms: ['HS256']`), preventing algorithm downgrade or confusion attacks.
 4. **Identity Trust Rule**: Authenticated identity is derived exclusively from the verified Bearer JWT. User identity supplied via request bodies, queries, params, or custom headers is never trusted.
-5. **Payload Size Limiting**: `express.json({ limit: '10kb' })` prevents memory exhaustion attacks via oversized request bodies. Future competition submissions will use direct object-storage or dedicated upload streams rather than standard JSON parsers.
+5. **Payload Size Limiting**: `express.json({ limit: '10kb' })` prevents memory exhaustion attacks via oversized request bodies.
 6. **Information Disclosure Prevention**: In production (`NODE_ENV=production`), error responses return generic messages (`"Something went wrong"`) without leaking stack traces, database credentials, or internal file paths.
 7. **Structured Log Sanitization**: All loggers recursively redact sensitive keys including passwords, tokens, cookies, authorization headers, and connection URIs.
 8. **CORS Isolation**: Whitelisted origins are enforced via environment variables. Wildcard `*` is prohibited for authenticated production environments.
