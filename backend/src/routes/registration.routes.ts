@@ -6,7 +6,7 @@ import { env } from '../config/env';
 
 const registrationRouter = Router();
 
-const isTestEnv = env.NODE_ENV === 'test' || process.env.NODE_ENV === 'test';
+const isTestEnv = env.NODE_ENV === 'test';
 
 // Registration rate limiter: 30 requests per 15 min in production, relaxed in test environment
 const registrationRateLimiter = createRateLimiter({

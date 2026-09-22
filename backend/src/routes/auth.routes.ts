@@ -8,7 +8,7 @@ import { registerSchema, loginSchema } from '../validators/auth.validator';
 
 const authRouter = Router();
 
-const isTestEnv = env.NODE_ENV === 'test' || process.env.NODE_ENV === 'test';
+const isTestEnv = env.NODE_ENV === 'test';
 
 // Stricter rate limiter for sensitive authentication endpoints (10 requests per 15 min in production)
 const authRateLimiter = createRateLimiter({

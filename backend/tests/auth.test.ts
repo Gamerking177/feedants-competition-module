@@ -7,7 +7,7 @@ import app from '../src/app';
 import { User } from '../src/models/User';
 import { env } from '../src/config/env';
 
-describe('Phase 4: Authentication & User Management Tests', () => {
+describe('Authentication & User Management Tests (20 Scenarios)', () => {
   beforeAll(async () => {
     // Ensure test environment is strictly isolated and cannot target production
     if (process.env.NODE_ENV === 'production') {

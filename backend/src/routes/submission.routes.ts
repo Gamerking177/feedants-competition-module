@@ -8,7 +8,7 @@ import { env } from '../config/env';
 
 const submissionRouter = Router();
 
-const isTestEnv = env.NODE_ENV === 'test' || process.env.NODE_ENV === 'test';
+const isTestEnv = env.NODE_ENV === 'test';
 
 // Submission rate limiter: 30 requests per 15 min in production, relaxed in test environment
 const submissionRateLimiter = createRateLimiter({

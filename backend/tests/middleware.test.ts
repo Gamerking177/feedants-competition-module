@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import request from 'supertest';
 import express, { Request, Response } from 'express';
 import { z } from 'zod';
@@ -163,13 +163,16 @@ describe('Middleware Tests', () => {
     it('should mask internal errors and stack traces in production mode', async () => {
       const originalNodeEnv = process.env.NODE_ENV;
       process.env.NODE_ENV = 'production';
+      vi.resetModules();
 
       try {
+        const { errorHandler: prodErrorHandler } = await import('../src/middleware/errorHandler');
+
         const testProdApp = express();
         testProdApp.get('/internal-crash', () => {
           throw new Error('Database password was password123 at /secret/path.ts');
         });
-        testProdApp.use(errorHandler);
+        testProdApp.use(prodErrorHandler);
 
         const response = await request(testProdApp).get('/internal-crash');
         expect(response.status).toBe(500);
@@ -182,6 +185,7 @@ describe('Middleware Tests', () => {
         expect(JSON.stringify(response.body)).not.toContain('password123');
       } finally {
         process.env.NODE_ENV = originalNodeEnv;
+        vi.resetModules();
       }
     });
   });

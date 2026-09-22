@@ -111,7 +111,7 @@ export function errorHandler(
     method: req.method,
   });
 
-  const isProduction = env.NODE_ENV === 'production' || process.env.NODE_ENV === 'production';
+  const isProduction = env.NODE_ENV === 'production';
   const message =
     isProduction
       ? 'Something went wrong'

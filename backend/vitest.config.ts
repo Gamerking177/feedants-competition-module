@@ -6,5 +6,8 @@ export default defineConfig({
     environment: 'node',
     include: ['tests/**/*.test.ts'],
     fileParallelism: false,
+    env: {
+      NODE_ENV: 'test',
+    },
   },
 });
