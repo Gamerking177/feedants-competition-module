@@ -1,5 +1,7 @@
-import { CompetitionStatus, ICompetition } from '../models/Competition';
+import mongoose from 'mongoose';
+import { Competition, CompetitionStatus, ICompetition } from '../models/Competition';
 import { AppError } from '../utils/AppError';
+import { AuthenticatedUser } from '../types/express';
 
 export interface CompetitionDateInput {
   registrationStart?: Date;
@@ -7,6 +9,18 @@ export interface CompetitionDateInput {
   submissionStart?: Date;
   submissionEnd?: Date;
   resultDate?: Date;
+}
+
+export interface CompetitionDetailsResult {
+  competition: Record<string, unknown>;
+  userState: {
+    isRegistered: boolean;
+    hasSubmitted: boolean;
+  };
+  actions: {
+    canRegister: boolean;
+    canSubmit: boolean;
+  };
 }
 
 export type CompetitionStatusInput = Pick<
@@ -157,5 +171,61 @@ export const competitionService = {
     }
 
     return 'UPCOMING';
+  },
+
+  /**
+   * Retrieves full competition details by ID, computing effective status,
+   * remaining spots, user state, and permitted actions.
+   */
+  async getCompetitionDetails(
+    competitionId: string,
+    _user?: AuthenticatedUser
+  ): Promise<CompetitionDetailsResult> {
+    // 1. Strict 24-char hex ObjectId validation
+    if (!mongoose.isObjectIdOrHexString(competitionId)) {
+      throw AppError.badRequest('Invalid competition ID format', 'INVALID_ID');
+    }
+
+    // 2. Fetch competition from MongoDB
+    const competition = await Competition.findById(competitionId);
+    if (!competition) {
+      throw AppError.notFound('Competition not found', 'COMPETITION_NOT_FOUND');
+    }
+
+    // 3. Single server timestamp for consistent lifecycle evaluation
+    const now = new Date();
+
+    // 4. Derive dynamic business state server-side
+    const effectiveStatus = this.determineCompetitionStatus(competition, now);
+    const remainingSpots = this.getRemainingSpots(
+      competition.maxParticipants,
+      competition.registeredCount
+    );
+
+    // 5. Serialize competition data (strips __v and maps _id to id)
+    const competitionJson = competition.toJSON();
+    const competitionData = {
+      ...competitionJson,
+      status: effectiveStatus,
+      remainingSpots,
+    };
+
+    // 6. Build user participation state (placeholders until Registration/Submission exist)
+    const userState = {
+      isRegistered: false,
+      hasSubmitted: false,
+    };
+
+    // 7. Build permitted actions
+    const actions = {
+      canRegister: effectiveStatus === 'REGISTRATION_OPEN' && remainingSpots > 0,
+      canSubmit: false,
+    };
+
+    return {
+      competition: competitionData,
+      userState,
+      actions,
+    };
   },
 };

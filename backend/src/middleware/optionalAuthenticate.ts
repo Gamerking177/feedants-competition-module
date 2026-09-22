@@ -3,11 +3,12 @@ import { AppError } from '../utils/AppError';
 import { authService } from '../services/auth.service';
 
 /**
- * Authentication middleware that verifies the Bearer JWT.
- * Derives user identity exclusively from the verified JWT.
- * User identity supplied via body, query, params, or custom headers is NEVER trusted.
+ * Optional authentication middleware.
+ * If no Authorization header is present, the request proceeds anonymously (req.user = undefined).
+ * If an Authorization header is present, it MUST be a valid Bearer JWT;
+ * invalid or expired tokens are rejected with HTTP 401.
  */
-export async function authenticate(
+export async function optionalAuthenticate(
   req: Request,
   _res: Response,
   next: NextFunction
@@ -15,8 +16,10 @@ export async function authenticate(
   try {
     const authHeader = req.header('Authorization') || req.header('authorization');
 
+    // Anonymous request
     if (!authHeader) {
-      throw AppError.unauthorized('Authentication token is missing', 'UNAUTHORIZED');
+      req.user = undefined;
+      return next();
     }
 
     const parts = authHeader.trim().split(' ');
@@ -32,6 +35,7 @@ export async function authenticate(
       throw AppError.unauthorized('Authentication token is missing', 'UNAUTHORIZED');
     }
 
+    // Verify token and attach user; throws 401 if invalid/expired
     req.user = await authService.verifyTokenAndGetUser(token);
 
     next();

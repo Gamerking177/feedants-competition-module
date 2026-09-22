@@ -125,4 +125,40 @@ export const authService = {
       user: toSafeUser(user),
     };
   },
+
+  /**
+   * Verifies a JWT token with HS256, extracts the subject, validates the user
+   * in MongoDB, and returns the AuthenticatedUser object.
+   */
+  async verifyTokenAndGetUser(token: string): Promise<SafeUser> {
+    let decoded: jwt.JwtPayload;
+    try {
+      decoded = jwt.verify(token, env.JWT_SECRET, {
+        algorithms: ['HS256'],
+      }) as jwt.JwtPayload;
+    } catch (err) {
+      if (err instanceof jwt.TokenExpiredError) {
+        throw AppError.unauthorized('Token has expired', 'TOKEN_EXPIRED');
+      }
+      if (err instanceof jwt.JsonWebTokenError) {
+        throw AppError.unauthorized('Invalid authentication token', 'INVALID_TOKEN');
+      }
+      throw AppError.unauthorized('Authentication failed', 'UNAUTHORIZED');
+    }
+
+    if (!decoded.sub) {
+      throw AppError.unauthorized('Invalid token payload', 'INVALID_TOKEN');
+    }
+
+    const user = await User.findById(decoded.sub);
+    if (!user) {
+      throw AppError.unauthorized('Authenticated user not found', 'USER_NOT_FOUND');
+    }
+
+    if (!user.isActive) {
+      throw AppError.unauthorized('Account is deactivated', 'ACCOUNT_INACTIVE');
+    }
+
+    return toSafeUser(user);
+  },
 };

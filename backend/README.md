@@ -155,19 +155,22 @@ backend/
 │   │   ├── database.ts        # Mongoose connection with lifecycle & graceful shutdown
 │   │   └── env.ts             # Zod-validated typed environment configuration
 │   ├── middleware/
-│   │   ├── authenticate.ts   # JWT authentication middleware (HS256 only)
-│   │   ├── errorHandler.ts   # Centralized error handling (production-safe error masking)
-│   │   ├── notFound.ts       # 404 handler returning standardized error format
-│   │   ├── rateLimiter.ts    # Global & route-specific rate limiter factory
-│   │   └── validate.ts       # Generic Zod validation middleware (body, query, params)
+│   │   ├── authenticate.ts          # JWT authentication middleware (HS256 only)
+│   │   ├── optionalAuthenticate.ts  # Optional JWT authentication middleware
+│   │   ├── errorHandler.ts          # Centralized error handling (production-safe error masking)
+│   │   ├── notFound.ts              # 404 handler returning standardized error format
+│   │   ├── rateLimiter.ts           # Global & route-specific rate limiter factory
+│   │   └── validate.ts              # Generic Zod validation middleware (body, query, params)
 │   ├── routes/
-│   │   ├── auth.routes.ts    # Authentication routes (/register, /login, /me)
-│   │   └── index.ts          # Root API router mounted at /api/v1
+│   │   ├── auth.routes.ts           # Authentication routes (/register, /login, /me)
+│   │   ├── competition.routes.ts    # Competition routes (/:competitionId)
+│   │   └── index.ts                 # Root API router mounted at /api/v1
 │   ├── controllers/
-│   │   └── auth.controller.ts # Authentication request handlers
+│   │   ├── auth.controller.ts        # Authentication request handlers
+│   │   └── competition.controller.ts # Competition request handlers
 │   ├── services/
 │   │   ├── auth.service.ts        # Authentication business logic & password hashing
-│   │   └── competition.service.ts # Competition lifecycle & capacity calculation
+│   │   └── competition.service.ts # Competition details, lifecycle & capacity calculation
 │   ├── models/
 │   │   ├── Competition.ts    # Competition model with subdocuments & lifecycle
 │   │   └── User.ts           # User Mongoose model with safe serialization
@@ -184,11 +187,12 @@ backend/
 │   ├── app.ts                 # Express application setup, middlewares, routes
 │   └── server.ts              # HTTP server lifecycle, DB connection, graceful shutdown
 ├── tests/
-│   ├── auth.test.ts           # Authentication test scenarios
-│   ├── competition.test.ts    # Competition model and lifecycle test scenarios
-│   ├── health.test.ts         # Health check endpoint tests
-│   ├── middleware.test.ts     # Error handler, 404, rate limiter, and validate tests
-│   └── utils.test.ts          # AppError, requestId, response helpers tests
+│   ├── auth.test.ts                # Authentication test scenarios
+│   ├── competition.test.ts         # Competition model and lifecycle test scenarios
+│   ├── competition-details.test.ts # Competition details API test scenarios
+│   ├── health.test.ts              # Health check endpoint tests
+│   ├── middleware.test.ts          # Error handler, 404, rate limiter, and validate tests
+│   └── utils.test.ts               # AppError, requestId, response helpers tests
 ├── .env.example               # Template environment file with placeholders
 ├── .gitignore                 # Node, env, dist, and log exclusions
 ├── package.json               # Scripts, dependencies, type definitions
@@ -253,11 +257,12 @@ backend/
 
 ---
 
-## 10. Health Endpoint
+## 10. API Endpoints
 
+### Health Check
 - **Method**: `GET`
 - **Path**: `/health`
-- **Authentication**: None (public & lightweight)
+- **Access**: Public (unauthenticated)
 - **Response**:
 ```json
 {
@@ -269,3 +274,64 @@ backend/
   }
 }
 ```
+
+### Authentication
+- `POST /api/v1/auth/register`: Register new user with name, email, password (>= 8 chars).
+- `POST /api/v1/auth/login`: Authenticate user and receive JWT.
+- `GET /api/v1/auth/me`: Retrieve current user profile (requires `Authorization: Bearer <token>`).
+
+### Competition Details
+- **Method**: `GET`
+- **Path**: `/api/v1/competitions/:competitionId`
+- **Access**: Public (optional authentication via `Bearer <JWT>`)
+  - Anonymous requests receive default user state (`isRegistered: false, hasSubmitted: false`).
+  - Valid `Bearer <JWT>` derives authenticated user identity.
+  - Invalid/expired `Bearer` tokens return HTTP 401.
+- **Response Structure**:
+```json
+{
+  "success": true,
+  "message": "Competition details retrieved successfully",
+  "data": {
+    "competition": {
+      "id": "60c72b2f9b1d8b001c8e4e01",
+      "title": "National Coding Challenge",
+      "slug": "national-coding-challenge-2026",
+      "category": "Coding",
+      "type": "Individual",
+      "description": "...",
+      "language": "English",
+      "prizePool": 100000,
+      "entryFee": 0,
+      "maxParticipants": 1000,
+      "registeredCount": 735,
+      "remainingSpots": 265,
+      "certificateAvailable": true,
+      "registrationStart": "2026-06-01T00:00:00.000Z",
+      "registrationEnd": "2026-06-10T00:00:00.000Z",
+      "submissionStart": "2026-06-11T00:00:00.000Z",
+      "submissionEnd": "2026-06-20T00:00:00.000Z",
+      "resultDate": "2026-06-25T00:00:00.000Z",
+      "status": "REGISTRATION_OPEN",
+      "judge": {
+        "name": "Alex Rivera",
+        "designation": "Principal Architect",
+        "organization": "CloudScale"
+      },
+      "rewards": [],
+      "previousWinners": [],
+      "judgingParameters": [],
+      "rules": []
+    },
+    "userState": {
+      "isRegistered": false,
+      "hasSubmitted": false
+    },
+    "actions": {
+      "canRegister": true,
+      "canSubmit": false
+    }
+  }
+}
+```
+
