@@ -69,9 +69,31 @@ export function errorHandler(
     return;
   }
 
-  // 5. Mongoose CastError / ValidationError
-  if (typeof err === 'object' && err !== null && 'name' in err) {
-    const errorObj = err as { name: string; message?: string };
+  // 5. Mongoose CastError / ValidationError / Duplicate Key (11000)
+  if (typeof err === 'object' && err !== null) {
+    const errorObj = err as {
+      name?: string;
+      code?: number;
+      keyPattern?: Record<string, unknown>;
+      keyValue?: Record<string, unknown>;
+      message?: string;
+    };
+
+    if (errorObj.code === 11000) {
+      const isEmail =
+        Boolean(errorObj.keyPattern?.email) ||
+        Boolean(errorObj.keyValue?.email) ||
+        (typeof errorObj.message === 'string' && errorObj.message.includes('email'));
+
+      if (isEmail) {
+        sendError(res, 'Email already registered', 'EMAIL_ALREADY_EXISTS', 409);
+        return;
+      }
+
+      sendError(res, 'Resource already exists', 'DUPLICATE_RESOURCE', 409);
+      return;
+    }
+
     if (errorObj.name === 'CastError') {
       sendError(res, 'Invalid resource identifier format', 'INVALID_ID', 400);
       return;

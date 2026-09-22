@@ -25,6 +25,22 @@ const envSchema = z.object({
       required_error: 'CORS_ORIGIN is required (e.g. http://localhost:3000).',
     })
     .default('http://localhost:3000'),
+  JWT_SECRET: z
+    .string({
+      required_error: 'JWT_SECRET is required. Please provide a secret key of at least 32 characters.',
+    })
+    .min(32, 'JWT_SECRET must be at least 32 characters long'),
+  JWT_EXPIRES_IN: z
+    .string()
+    .regex(/^\d+[smhd]$/, 'JWT_EXPIRES_IN must be a valid duration (e.g. 15m, 1h, 7d)')
+    .default('7d'),
+  TEST_MONGODB_URI: z
+    .string()
+    .refine(
+      (uri) => uri.includes('test') && !uri.includes('prod'),
+      'TEST_MONGODB_URI must be an isolated test database URI containing "test" and cannot point to production'
+    )
+    .default('mongodb://127.0.0.1:27017/feedants_test_isolated'),
 });
 
 export type Env = z.infer<typeof envSchema>;
