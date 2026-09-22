@@ -1,5 +1,6 @@
 import mongoose from 'mongoose';
 import { Competition, CompetitionStatus, ICompetition } from '../models/Competition';
+import { Registration } from '../models/Registration';
 import { AppError } from '../utils/AppError';
 import { AuthenticatedUser } from '../types/express';
 
@@ -179,7 +180,7 @@ export const competitionService = {
    */
   async getCompetitionDetails(
     competitionId: string,
-    _user?: AuthenticatedUser
+    user?: AuthenticatedUser
   ): Promise<CompetitionDetailsResult> {
     // 1. Strict 24-char hex ObjectId validation
     if (!mongoose.isObjectIdOrHexString(competitionId)) {
@@ -210,15 +211,24 @@ export const competitionService = {
       remainingSpots,
     };
 
-    // 6. Build user participation state (placeholders until Registration/Submission exist)
+    // 6. Build user participation state
+    let isRegistered = false;
+    if (user?.id) {
+      const existing = await Registration.exists({
+        competitionId: competition._id,
+        userId: user.id,
+      });
+      isRegistered = Boolean(existing);
+    }
+
     const userState = {
-      isRegistered: false,
+      isRegistered,
       hasSubmitted: false,
     };
 
     // 7. Build permitted actions
     const actions = {
-      canRegister: effectiveStatus === 'REGISTRATION_OPEN' && remainingSpots > 0,
+      canRegister: effectiveStatus === 'REGISTRATION_OPEN' && remainingSpots > 0 && !isRegistered,
       canSubmit: false,
     };
 

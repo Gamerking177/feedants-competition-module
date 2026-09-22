@@ -71,12 +71,18 @@ Competitions transition through 8 standardized states:
 ## 3. Database Design & Indexes
 
 Mongoose schema optimization and indexes:
-- `{ slug: 1 }`: Unique index for fast lookups.
-- `{ status: 1 }`: Lifecycle filtering.
-- `{ category: 1 }`: Category filtering.
-- `{ registrationStart: 1 }`, `{ registrationEnd: 1 }`, `{ submissionStart: 1 }`, `{ resultDate: 1 }`: Date-range queries.
-- `{ status: 1, category: 1 }`: Compound index for filtered competition listings.
-- User email unique index: `{ email: 1 }`.
+- **Competition**:
+  - `{ slug: 1 }`: Unique index for fast lookups.
+  - `{ status: 1 }`: Lifecycle filtering.
+  - `{ category: 1 }`: Category filtering.
+  - `{ registrationStart: 1 }`, `{ registrationEnd: 1 }`, `{ submissionStart: 1 }`, `{ resultDate: 1 }`: Date-range queries.
+  - `{ status: 1, category: 1 }`: Compound index for filtered competition listings.
+- **User**:
+  - `{ email: 1 }`: Unique index for fast lookups and authentication.
+- **Registration**:
+  - `{ competitionId: 1, userId: 1 }`: Unique compound index guaranteeing zero duplicate registrations at the database level.
+  - `{ competitionId: 1 }`: Fast lookup of registrations for a competition.
+  - `{ userId: 1 }`: Fast lookup of user registrations.
 
 ---
 
@@ -164,16 +170,20 @@ backend/
 │   ├── routes/
 │   │   ├── auth.routes.ts           # Authentication routes (/register, /login, /me)
 │   │   ├── competition.routes.ts    # Competition routes (/:competitionId)
+│   │   ├── registration.routes.ts   # Registration routes (/:competitionId/register)
 │   │   └── index.ts                 # Root API router mounted at /api/v1
 │   ├── controllers/
-│   │   ├── auth.controller.ts        # Authentication request handlers
-│   │   └── competition.controller.ts # Competition request handlers
+│   │   ├── auth.controller.ts         # Authentication request handlers
+│   │   ├── competition.controller.ts  # Competition request handlers
+│   │   └── registration.controller.ts # Competition registration request handlers
 │   ├── services/
-│   │   ├── auth.service.ts        # Authentication business logic & password hashing
-│   │   └── competition.service.ts # Competition details, lifecycle & capacity calculation
+│   │   ├── auth.service.ts         # Authentication business logic & password hashing
+│   │   ├── competition.service.ts  # Competition details, lifecycle & capacity calculation
+│   │   └── registration.service.ts # Concurrency-safe registration with atomic reservation & transactions
 │   ├── models/
-│   │   ├── Competition.ts    # Competition model with subdocuments & lifecycle
-│   │   └── User.ts           # User Mongoose model with safe serialization
+│   │   ├── Competition.ts     # Competition model with subdocuments & lifecycle
+│   │   ├── Registration.ts    # Registration model with unique compound index
+│   │   └── User.ts            # User Mongoose model with safe serialization
 │   ├── validators/
 │   │   ├── auth.validator.ts        # Zod schemas for register and login
 │   │   └── competition.validator.ts # Zod schemas for competition data
@@ -190,6 +200,7 @@ backend/
 │   ├── auth.test.ts                # Authentication test scenarios
 │   ├── competition.test.ts         # Competition model and lifecycle test scenarios
 │   ├── competition-details.test.ts # Competition details API test scenarios
+│   ├── registration.test.ts        # Competition registration & concurrency test scenarios
 │   ├── health.test.ts              # Health check endpoint tests
 │   ├── middleware.test.ts          # Error handler, 404, rate limiter, and validate tests
 │   └── utils.test.ts               # AppError, requestId, response helpers tests
@@ -285,7 +296,8 @@ backend/
 - **Path**: `/api/v1/competitions/:competitionId`
 - **Access**: Public (optional authentication via `Bearer <JWT>`)
   - Anonymous requests receive default user state (`isRegistered: false, hasSubmitted: false`).
-  - Valid `Bearer <JWT>` derives authenticated user identity.
+  - Authenticated requests dynamically verify registration status via `Registration.exists({ competitionId, userId })`.
+  - `actions.canRegister` evaluates `effectiveStatus === 'REGISTRATION_OPEN' && remainingSpots > 0 && !isRegistered`.
   - Invalid/expired `Bearer` tokens return HTTP 401.
 - **Response Structure**:
 ```json
@@ -334,4 +346,52 @@ backend/
   }
 }
 ```
+
+### Competition Registration
+- **Method**: `POST`
+- **Path**: `/api/v1/competitions/:competitionId/register`
+- **Access**: Authenticated (requires `Authorization: Bearer <JWT>`)
+- **Rate Limit**: 30 requests / 15 minutes per IP
+- **Request Body**: Empty (`{}`). User identity is derived strictly from the verified JWT (`req.user.id`). Client-provided IDs in body, query, or headers are ignored.
+- **Rules & Protections**:
+  - **Lifecycle Enforcement**: Registration permitted only during `REGISTRATION_OPEN` (server-authoritative UTC time). Requests outside the date window or on non-active competitions return HTTP 409 `REGISTRATION_CLOSED`.
+  - **Concurrency-Safe Atomic Capacity**: Reserves slots using MongoDB conditional atomic update:
+    ```typescript
+    Competition.findOneAndUpdate(
+      { _id: competitionId, registeredCount: { $lt: maxParticipants } },
+      { $inc: { registeredCount: 1 } },
+      { new: true, session }
+    );
+    ```
+    If capacity is full, returns HTTP 409 `REGISTRATION_FULL`.
+  - **ACID Transaction Guarantee**: Managed via Mongoose `session.withTransaction(...)`. If registration record creation fails, capacity increment is automatically rolled back.
+  - **Zero Duplicate Registrations**: Enforced via unique compound index `{ competitionId: 1, userId: 1 }`. Duplicate attempts return HTTP 409 `ALREADY_REGISTERED`.
+  - **Paid Competitions**: Free competitions (`entryFee === 0`) register with `paymentStatus: 'NOT_REQUIRED'`. Paid competitions (`entryFee > 0`) return HTTP 409 `PAYMENT_REQUIRED` without creating a registration record or reserving capacity.
+- **Success Response** (`201 Created`):
+```json
+{
+  "success": true,
+  "message": "Competition registration successful",
+  "data": {
+    "registration": {
+      "id": "60c72b2f9b1d8b001c8e4e99",
+      "competitionId": "60c72b2f9b1d8b001c8e4e01",
+      "userId": "60c72b2f9b1d8b001c8e4e55",
+      "status": "REGISTERED",
+      "paymentStatus": "NOT_REQUIRED",
+      "registeredAt": "2026-06-05T12:00:00.000Z"
+    }
+  }
+}
+```
+- **Error Codes**:
+  - `400 INVALID_ID`: Invalid competition ID format.
+  - `401 UNAUTHORIZED`: Missing authentication token.
+  - `401 INVALID_TOKEN`: Malformed or invalid JWT signature.
+  - `404 COMPETITION_NOT_FOUND`: Competition does not exist.
+  - `409 REGISTRATION_CLOSED`: Registration window is not open.
+  - `409 REGISTRATION_FULL`: Competition has reached maximum capacity.
+  - `409 ALREADY_REGISTERED`: User is already registered for this competition.
+  - `409 PAYMENT_REQUIRED`: Competition requires payment.
+
 
